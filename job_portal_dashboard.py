@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = Path(os.environ.get("JOB_DASHBOARD_CONFIG_PATH", ROOT / "job_portal_dashboard_config.json")).expanduser()
 APPLIED_PATH = Path(os.environ.get("JOB_DASHBOARD_APPLIED_PATH", ROOT / "job_portal_dashboard_applied.json")).expanduser()
 CLICKS_PATH = Path(os.environ.get("JOB_DASHBOARD_CLICKS_PATH", ROOT / "job_portal_dashboard_clicks.json")).expanduser()
+SEEN_PATH = Path(os.environ.get("JOB_DASHBOARD_SEEN_PATH", ROOT / "job_portal_dashboard_seen.json")).expanduser()
 APPLIED_TTL_SECONDS = 2 * 60 * 60
 PYTHON = sys.executable or "python3"
 
@@ -95,6 +96,7 @@ RUN_LOCK = threading.Lock()
 RUNS: dict[str, dict[str, Any]] = {}
 PROCESS_LOCK = threading.Lock()
 ACTIVE_PROCESSES: dict[int, dict[str, Any]] = {}
+SEEN_LOCK = threading.Lock()
 STOP_EVENT = threading.Event()
 
 
@@ -249,9 +251,14 @@ def load_latest_jobs(vendor: Vendor) -> list[dict[str, Any]]:
     latest = latest_jobs_file(vendor)
     if not latest:
         raise FileNotFoundError(f"No latest jobs file found for {vendor.label}")
-    data = json.loads(latest.read_text(encoding="utf-8"))
+    data = load_jobs_file(latest)
+    return data
+
+
+def load_jobs_file(path: Path) -> list[dict[str, Any]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
-        raise ValueError(f"Expected a list of jobs in {latest}")
+        raise ValueError(f"Expected a list of jobs in {path}")
     return [row for row in data if isinstance(row, dict)]
 
 
@@ -265,6 +272,96 @@ def job_key(vendor_slug: str, job: dict[str, Any]) -> str:
         for field in ("title", "location", "posted_date", "job_id")
     )
     return hashlib.sha256(f"{vendor_slug}|{identity}".encode("utf-8")).hexdigest()
+
+
+def job_keys_for_rows(vendor_slug: str, jobs: list[dict[str, Any]]) -> list[str]:
+    seen: set[str] = set()
+    keys: list[str] = []
+    for job in jobs:
+        key = job_key(vendor_slug, job)
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def load_job_keys_from_file(vendor: Vendor, path: Path | None) -> list[str]:
+    if not path:
+        return []
+    try:
+        return job_keys_for_rows(vendor.slug, load_jobs_file(path))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+
+
+def load_seen_state(path: Path = SEEN_PATH) -> dict[str, Any]:
+    if not path.exists():
+        return {"vendors": {}}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"vendors": {}}
+    if not isinstance(data, dict):
+        return {"vendors": {}}
+    vendors = data.get("vendors")
+    if not isinstance(vendors, dict):
+        data["vendors"] = {}
+    return data
+
+
+def save_seen_state(state: dict[str, Any], path: Path = SEEN_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def baseline_keys_for_vendor(vendor: Vendor, fallback_file: Path | None, state: dict[str, Any] | None = None) -> set[str]:
+    state = state or load_seen_state()
+    vendor_state = state.get("vendors", {}).get(vendor.slug, {})
+    saved_keys = vendor_state.get("last_successful_keys") if isinstance(vendor_state, dict) else None
+    if isinstance(saved_keys, list):
+        return {str(key) for key in saved_keys}
+    return set(load_job_keys_from_file(vendor, fallback_file))
+
+
+def latest_new_keys_for_vendor(slug: str, state: dict[str, Any] | None = None) -> set[str]:
+    state = state or load_seen_state()
+    vendor_state = state.get("vendors", {}).get(slug, {})
+    keys = vendor_state.get("last_new_keys") if isinstance(vendor_state, dict) else None
+    if not isinstance(keys, list):
+        return set()
+    return {str(key) for key in keys}
+
+
+def update_seen_success(
+    vendor: Vendor,
+    latest_file: Path | None,
+    jobs: list[dict[str, Any]],
+    previous_keys: set[str],
+    run_id: str,
+    ready_at: str,
+    path: Path = SEEN_PATH,
+) -> dict[str, Any]:
+    latest_keys = job_keys_for_rows(vendor.slug, jobs)
+    new_keys = [key for key in latest_keys if key not in previous_keys]
+    with SEEN_LOCK:
+        state = load_seen_state(path)
+        vendors = state.setdefault("vendors", {})
+        vendors[vendor.slug] = {
+            "last_successful_keys": latest_keys,
+            "last_new_keys": new_keys,
+            "last_new_count": len(new_keys),
+            "last_run_id": run_id,
+            "ready_at": ready_at,
+            "latest_file": str(latest_file.relative_to(ROOT)) if latest_file and latest_file.exists() else "",
+            "latest_count": len(jobs),
+        }
+        save_seen_state(state, path)
+    return {
+        "new_keys": new_keys,
+        "new_count": len(new_keys),
+        "ready_run_id": run_id,
+        "ready_at": ready_at,
+    }
 
 
 def load_applied_marks() -> dict[str, dict[str, Any]]:
@@ -356,6 +453,12 @@ def format_job_for_ui(vendor: Vendor, job: dict[str, Any], index: int, marks: di
 def latest_jobs_for_ui(slug: str, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     vendor = VENDOR_BY_SLUG[slug]
     jobs = load_latest_jobs(vendor)
+    total_jobs = len(jobs)
+    state = load_seen_state()
+    new_keys = latest_new_keys_for_vendor(slug, state)
+    vendor_seen = state.get("vendors", {}).get(slug, {})
+    if payload.get("new_only"):
+        jobs = [job for job in jobs if job_key(slug, job) in new_keys]
     start_at = max(int(payload.get("start_at") or config.get("start_at") or 1), 1)
     limit = int(payload.get("limit") or config.get("open_limit") or 0)
     selected = jobs[start_at - 1:] if start_at > 1 else jobs
@@ -363,8 +466,30 @@ def latest_jobs_for_ui(slug: str, config: dict[str, Any], payload: dict[str, Any
         selected = selected[:limit]
     marks = load_applied_marks()
     clicks = load_click_counts()
-    rows = [format_job_for_ui(vendor, job, start_at + offset, marks, clicks) for offset, job in enumerate(selected)]
-    return {"vendor": vendor.label, "jobs": rows, "total": len(jobs), "start_at": start_at, "limit": limit}
+    rows = []
+    for offset, job in enumerate(selected):
+        row = format_job_for_ui(vendor, job, start_at + offset, marks, clicks)
+        row["is_new"] = row["key"] in new_keys
+        row["ready_run_id"] = str(vendor_seen.get("last_run_id") or "")
+        rows.append(row)
+    return {
+        "vendor": vendor.label,
+        "jobs": rows,
+        "total": total_jobs,
+        "shown_total": len(jobs),
+        "new_total": len(new_keys),
+        "new_only": bool(payload.get("new_only")),
+        "start_at": start_at,
+        "limit": limit,
+    }
+
+
+def latest_step_for_vendor(slug: str) -> dict[str, Any] | None:
+    for run in reversed(list(RUNS.values())):
+        for step in reversed(run.get("steps") or []):
+            if step.get("slug") == slug:
+                return step
+    return None
 
 
 def vendor_status(vendor: Vendor) -> dict[str, Any]:
@@ -378,12 +503,21 @@ def vendor_status(vendor: Vendor) -> dict[str, Any]:
             modified = datetime.fromtimestamp(latest.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
         except (OSError, json.JSONDecodeError):
             count = 0
+    seen_state = load_seen_state().get("vendors", {}).get(vendor.slug, {})
+    step = latest_step_for_vendor(vendor.slug) or {}
+    run_status = str(step.get("status") or "")
+    new_count = int(step.get("new_count") if step.get("new_count") is not None else seen_state.get("last_new_count") or len(seen_state.get("last_new_keys") or []))
+    ready_at = str(step.get("ready_at") or seen_state.get("ready_at") or "")
     return {
         **asdict(vendor),
         "latest_file": str(latest.relative_to(ROOT)) if latest else "",
         "latest_count": count,
         "latest_modified": modified,
         "active_today": vendor.slug in active_pair_for(),
+        "run_status": run_status,
+        "new_count": new_count,
+        "ready_at": ready_at,
+        "last_step_status": run_status,
     }
 
 
@@ -470,6 +604,7 @@ def run_scrapers(run_id: str, vendor_slugs: list[str], config: dict[str, Any]) -
         }
         RUNS[run_id]["steps"].append(step)
         before = latest_jobs_file(vendor)
+        previous_keys = baseline_keys_for_vendor(vendor, before)
         cmd = command_for_scrape(vendor, config)
         try:
             proc = launch_process(
@@ -490,12 +625,23 @@ def run_scrapers(run_id: str, vendor_slugs: list[str], config: dict[str, Any]) -
             status = vendor_status(vendor)
             output = ((stdout or "") + "\n" + (stderr or "")).strip()
             stopped = STOP_EVENT.is_set() and proc.returncode and proc.returncode < 0
+            ready_at = step_finished.isoformat(timespec="seconds") if proc.returncode == 0 and not stopped else ""
+            latest_jobs = load_latest_jobs(vendor) if proc.returncode == 0 and not stopped else []
+            new_summary = (
+                update_seen_success(vendor, after, latest_jobs, previous_keys, run_id, ready_at)
+                if proc.returncode == 0 and not stopped
+                else {"new_keys": [], "new_count": 0, "ready_run_id": "", "ready_at": ""}
+            )
             step.update({
                 "status": "stopped" if stopped else ("done" if proc.returncode == 0 else "failed"),
                 "returncode": proc.returncode,
                 "count": status["latest_count"] if proc.returncode == 0 else 0,
                 "latest_file": status["latest_file"],
                 "changed": str(before) != str(after),
+                "new_count": new_summary["new_count"],
+                "new_keys": new_summary["new_keys"],
+                "ready_run_id": new_summary["ready_run_id"],
+                "ready_at": new_summary["ready_at"],
                 "output": output[-5000:],
                 "summary": summarize_scraper_output(output),
                 "finished_at": step_finished.isoformat(timespec="seconds"),
@@ -692,6 +838,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = latest_jobs_for_ui(slug, config, {
                     "start_at": (query.get("start_at") or [""])[0],
                     "limit": (query.get("limit") or [""])[0],
+                    "new_only": (query.get("new_only") or [""])[0] in {"1", "true", "yes"},
                 })
             except Exception as exc:  # noqa: BLE001
                 self.send_json({"ok": False, "error": str(exc)}, status=500)
@@ -935,6 +1082,10 @@ HTML = r"""<!doctype html>
     }
     .active-pill { background: #cdeedb; color: #075f3e; }
     .stop-pill { background: #f3d6d6; color: #7a2020; }
+    .ready-pill { background: #dff1ff; color: #17547c; }
+    .new-pill { background: #ffe4bc; color: #704300; }
+    .failed-pill { background: #f3d6d6; color: #7a2020; }
+    .running-pill { background: #e6e0ff; color: #3d2f82; }
     .zero { color: var(--muted); }
     .log {
       margin-top: 18px;
@@ -1012,6 +1163,10 @@ HTML = r"""<!doctype html>
       align-items: center;
       padding: 10px 12px;
       border-bottom: 1px solid var(--line);
+    }
+    .job-row.new-job {
+      background: #fff9ed;
+      box-shadow: inset 3px 0 0 #d78a00;
     }
     .job-row:last-child { border-bottom: 0; }
     .job-title { font-weight: 800; line-height: 1.25; }
@@ -1189,7 +1344,13 @@ HTML = r"""<!doctype html>
             <div class="jobs-panel-title" id="jobsTitle">Selected Portal Jobs</div>
             <div class="jobs-panel-sub" id="jobsSub">Applied marks expire after 2 hours.</div>
           </div>
-          <button id="refreshJobs">Refresh Jobs</button>
+          <div class="button-row">
+            <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;font-weight:800;color:#34404b">
+              <input id="newOnly" type="checkbox" style="width:auto">
+              Show new only
+            </label>
+            <button id="refreshJobs">Refresh Jobs</button>
+          </div>
         </div>
         <div class="job-list" id="jobList">
           <div class="empty-state">Choose a portal to see the latest filtered jobs.</div>
@@ -1211,6 +1372,7 @@ HTML = r"""<!doctype html>
       vendorChecksTouched: false,
       portalJobs: [],
       jobsMeta: {},
+      showNewOnly: false,
       stopRequested: false,
       activeProcesses: [],
     };
@@ -1301,6 +1463,14 @@ HTML = r"""<!doctype html>
       return `${Math.max(minutes, 1)}m left`;
     }
 
+    function portalRunPill(v) {
+      if (v.run_status === "running") return '<span class="pill running-pill">running</span>';
+      if (v.run_status === "done" && v.ready_at) return '<span class="pill ready-pill">ready</span>';
+      if (v.run_status === "failed") return '<span class="pill failed-pill">failed</span>';
+      if (v.run_status === "stopped") return '<span class="pill stop-pill">stopped</span>';
+      return "";
+    }
+
     function renderRotation() {
       const today = new Date().toISOString().slice(0, 10);
       $("rotation").innerHTML = state.rotation.slice(0, 5).map((row) => `
@@ -1327,7 +1497,11 @@ HTML = r"""<!doctype html>
           <td><input class="pick" type="checkbox" value="${v.slug}" ${(state.vendorChecksTouched ? state.checkedVendors.has(v.slug) : v.active_today) ? "checked" : ""}></td>
           <td><span class="portal-name">${v.label}</span></td>
           <td>${v.active_today ? '<span class="pill active-pill">active</span>' : ""}</td>
-          <td class="${v.latest_count ? "" : "zero"}"><span class="job-count">${v.latest_count}</span></td>
+          <td class="${v.latest_count ? "" : "zero"}">
+            <span class="job-count">${v.latest_count}</span>
+            ${Number(v.new_count || 0) > 0 ? `<span class="pill new-pill">New ${v.new_count}</span>` : ""}
+            ${portalRunPill(v)}
+          </td>
           <td class="output-cell" title="${v.latest_file || ""}">${v.latest_file ? `${latestName(v.latest_file)} · ${v.latest_modified}` : '<span class="zero">No output yet</span>'}</td>
           <td>
             <div class="button-row">
@@ -1360,8 +1534,9 @@ HTML = r"""<!doctype html>
       const vendor = state.vendors.find((item) => item.slug === state.selectedVendor);
       $("jobsTitle").textContent = vendor ? `${vendor.label} Jobs` : "Selected Portal Jobs";
       const total = state.jobsMeta.total ?? 0;
+      const newTotal = state.jobsMeta.new_total ?? 0;
       $("jobsSub").textContent = vendor
-        ? `Showing from #${state.jobsMeta.start_at || $("startAt").value || 1}${state.jobsMeta.limit ? `, limit ${state.jobsMeta.limit}` : ""}. Applied marks expire after 2 hours. Total latest jobs: ${total}.`
+        ? `Showing ${state.jobsMeta.new_only ? "new jobs only" : "latest jobs"} from #${state.jobsMeta.start_at || $("startAt").value || 1}${state.jobsMeta.limit ? `, limit ${state.jobsMeta.limit}` : ""}. New since previous scrape: ${newTotal}. Total: ${total}.`
         : "Applied marks expire after 2 hours.";
       if (!state.portalJobs.length) {
         $("jobList").innerHTML = '<div class="empty-state">No latest jobs found for this portal yet. Scrape it first, then refresh.</div>';
@@ -1373,10 +1548,10 @@ HTML = r"""<!doctype html>
           ? `<span class="pill applied-pill">Applied · ${escapeHtml(formatSeconds(job.seconds_left))}</span>`
           : '<span class="pill not-applied-pill">Not applied</span>';
         return `
-          <div class="job-row">
+          <div class="job-row ${job.is_new ? "new-job" : ""}">
             <div class="zero">#${job.index}</div>
             <div>
-              <div class="job-title">${escapeHtml(job.title)}</div>
+              <div class="job-title">${job.is_new ? '<span class="pill new-pill">New</span> ' : ""}${escapeHtml(job.title)}</div>
               <div class="job-meta">${escapeHtml(meta || job.url || "")}</div>
             </div>
             <div>${applied}</div>
@@ -1407,11 +1582,15 @@ HTML = r"""<!doctype html>
       if (!latest) return;
       const freshNote = latest.kind === "today" ? "Fresh scrape from page/API start for today's 2 portals" : "Fresh scrape run";
       const lines = [`Run ${latest.id} - ${latest.kind} - ${latest.status}`, freshNote];
+      const completed = (latest.steps || []).filter((step) => ["done", "failed", "stopped"].includes(step.status)).length;
+      lines.push(`Progress: ${completed}/${(latest.vendors || []).length} portals completed`);
       for (const step of latest.steps || []) {
         const countText = step.status === "running" ? "scraping from beginning..." : `${step.count ?? 0} jobs`;
         const duration = step.duration_seconds == null ? "" : ` in ${step.duration_seconds}s`;
         const freshness = step.changed ? "new output" : "no new file";
-        lines.push(`${step.status.padEnd(7)} ${step.vendor}: ${countText}${duration} (${freshness})`);
+        const newText = step.status === "done" ? `, ${step.new_count || 0} new` : "";
+        const readyText = step.ready_at ? ` ready ${step.ready_at}` : "";
+        lines.push(`${step.status.padEnd(7)} ${step.vendor}: ${countText}${newText}${duration} (${freshness})${readyText}`);
         if (step.latest_file) lines.push(`        file: ${step.latest_file}`);
         if (step.summary) lines.push(`        ${step.summary}`);
         if (step.status === "failed" && step.output) lines.push(step.output);
@@ -1447,10 +1626,11 @@ HTML = r"""<!doctype html>
         start_at: String(Number($("startAt").value || 1)),
         limit: String(Number($("openLimit").value || 0)),
       });
+      if (state.showNewOnly) params.set("new_only", "1");
       try {
         const data = await api(`/api/jobs?${params.toString()}`);
         state.portalJobs = data.jobs || [];
-        state.jobsMeta = { total: data.total, start_at: data.start_at, limit: data.limit };
+        state.jobsMeta = { total: data.total, shown_total: data.shown_total, new_total: data.new_total, new_only: data.new_only, start_at: data.start_at, limit: data.limit };
       } catch (error) {
         state.portalJobs = [];
         state.jobsMeta = {};
@@ -1541,6 +1721,10 @@ HTML = r"""<!doctype html>
     $("openVendor").addEventListener("change", renderJudgePanel);
     $("openVendor").addEventListener("change", () => loadSelectedJobs());
     $("refreshJobs").addEventListener("click", () => loadSelectedJobs());
+    $("newOnly").addEventListener("change", (event) => {
+      state.showNewOnly = event.target.checked;
+      loadSelectedJobs();
+    });
     ["days", "openLimit", "startAt", "keepOpen", "keywords", "judgeResume", "judgeFirst", "judgeLast", "judgeEmail", "judgePhone", "judgeCountry", "judgeStreet", "judgeCity", "judgeState", "judgeZip", "judgeKeepOpen"].forEach((id) => {
       $(id).addEventListener("input", () => { state.configDirty = true; });
     });
