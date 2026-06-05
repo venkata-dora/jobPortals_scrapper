@@ -46,14 +46,14 @@ The script uploads your resume, clicks Continue, fills/verifies first name, last
 name, and email, then leaves each tab open at `Submit Application`. You manually
 click submit and handle CAPTCHA if Apex shows it.
 
-Change filters:
+Change posting-date filter:
 
 ```bash
-python apexsystems_applying_script/apex_scraper.py --posted-within-days 7 --min-hourly-rate 60
+python apexsystems_applying_script/apex_scraper.py --posted-within-days 7
 ```
 
 Disable filters:
 
 ```bash
-python apexsystems_applying_script/apex_scraper.py --posted-within-days 0 --min-hourly-rate 0 --keep-w2-f2f-onsite-interview
+python apexsystems_applying_script/apex_scraper.py --posted-within-days 0 --keep-w2-f2f-onsite-interview
 ```

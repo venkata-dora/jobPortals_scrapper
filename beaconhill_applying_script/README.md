@@ -19,6 +19,18 @@ python3 beaconhill_open_jobs.py --limit 5
 python3 beaconhill_open_jobs.py --limit 5 --apply
 ```
 
+Fill one application in Chrome and leave it open without submitting:
+
+```bash
+python3 beaconhill_apply.py
+```
+
+Fill and submit the Seattle Sr Automation Engineer role:
+
+```bash
+python3 beaconhill_apply.py --submit --keep-open-seconds 20
+```
+
 ## Filters
 
 - Keeps contract, temporary/contract, and temp-to-hire/C2H style jobs.

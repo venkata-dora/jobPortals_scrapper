@@ -424,14 +424,6 @@ def scrape_randstad(
                     print(f"  Excluded ({', '.join(reasons)}): {job.title}")
                     continue
 
-            if below_min_hourly(job, min_hourly_rate):
-                print(f"  Excluded (below ${min_hourly_rate:g}/hr): {job.title}")
-                continue
-
-            if job.pay_rate_unit == "year":
-                print(f"  Excluded (annual salary = full-time signal): {job.title}")
-                continue
-
             jobs.append(job)
 
         time.sleep(sleep_seconds)
@@ -578,7 +570,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--terms-file", type=Path)
     parser.add_argument("--posted-within-days", type=int, default=4)
     parser.add_argument("--keep-w2-f2f-onsite-interview", action="store_true")
-    parser.add_argument("--min-hourly-rate", type=float, default=0, help="Min hourly rate filter (0=disabled).")
+    parser.add_argument("--min-hourly-rate", type=float, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--timeout", type=int, default=20)
     parser.add_argument("--sleep", type=float, default=0.3)
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent / "output")

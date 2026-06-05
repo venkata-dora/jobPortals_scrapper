@@ -237,7 +237,7 @@ def filter_and_sort_jobs(jobs: Iterable[VendorJob], posted_within_days: Optional
             print(f"  Excluded ({', '.join(role_reasons)}): {job.title}")
             continue
         if exclude_disallowed_work:
-            reasons = disallowed_work_reasons(" ".join([job.title, job.employment_type, job.raw_text]))
+            reasons = disallowed_work_reasons(" ".join([job.title, job.employment_type, job.job_url, job.apply_url, job.raw_text]))
             if reasons:
                 print(f"  Excluded ({', '.join(reasons)}): {job.title}")
                 continue

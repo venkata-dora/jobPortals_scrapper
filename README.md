@@ -23,6 +23,24 @@ The repo includes separate scraper folders for:
 - Robert Half
 - Kforce
 - Insight Global
+- Artech
+- CCS Global Tech
+- Diverse Lynx
+- Ettain Group
+- Harvey Nash
+- Hays
+- INSPYR Solutions
+- Matlen Silver
+- Motion Recruitment
+- NTT DATA
+- Oliver James
+- Optomi
+- Open Systems Technologies
+- PTR Global
+- Pyramid Consulting
+- Strategic Staffing Solutions
+- Vaco
+- Venturi Group
 
 ## Requirements
 
@@ -301,7 +319,6 @@ Some portal-specific scrapers also support:
 --max-pages 3
 --limit 10
 --jobs-per-page 50
---min-hourly-rate 55
 --ai-filter
 ```
 

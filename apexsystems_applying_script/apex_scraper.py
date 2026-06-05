@@ -416,12 +416,6 @@ def scrape_apex(
         if exclude_disallowed_work and disallowed_work_reasons(" ".join([job.title, job.employment_type, job.raw_text])):
             print(f"Excluded {job.job_id}: {', '.join(disallowed_work_reasons(job.raw_text)) or 'disallowed work signal'}")
             continue
-        if below_min_hourly(job, min_hourly_rate):
-            print(f"Excluded {job.job_id}: below ${min_hourly_rate:g}/hour pay threshold (max {job.max_pay_rate} {job.pay_rate_unit})")
-            continue
-        if job.pay_rate_unit == "year":
-            print(f"  Excluded (annual salary = full-time signal): {job.title}")
-            continue
         jobs.append(job)
         time.sleep(sleep_seconds)
     return sort_jobs(jobs)
@@ -568,7 +562,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--terms-file", type=Path)
     parser.add_argument("--posted-within-days", type=int, default=4)
     parser.add_argument("--keep-w2-f2f-onsite-interview", action="store_true")
-    parser.add_argument("--min-hourly-rate", type=float, default=55)
+    parser.add_argument("--min-hourly-rate", type=float, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--rows-per-search", type=int, default=100)
     parser.add_argument("--timeout", type=int, default=20)
     parser.add_argument("--sleep", type=float, default=0.2)

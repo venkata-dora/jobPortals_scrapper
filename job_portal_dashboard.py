@@ -59,10 +59,11 @@ class Vendor:
     terms_mode: str = "none"
     page_arg: str = ""
     page_default: int = 0
+    color: str = ""
 
 
 VENDORS: list[Vendor] = [
-    Vendor("teksystems", "TEKsystems", "teksystems_applying_script", "teksystems_scraper.py", "teksystems_open_jobs.py", "teksystems", "file"),
+    Vendor("teksystems", "TEKsystems", "teksystems_applying_script", "teksystems_scraper.py", "teksystems_open_jobs.py", "teksystems", "file", color="red"),
     Vendor("apexsystems", "Apex Systems", "apexsystems_applying_script", "apex_scraper.py", "apex_open_jobs.py", "apex", "file", "rows-per-search", 100),
     Vendor("judgegroup", "Judge Group", "judgegroup_applying_script", "judgegroup_scraper.py", "judgegroup_open_jobs.py", "judgegroup", "file", "max-pages", 3),
     Vendor("beaconhill", "Beacon Hill", "beaconhill_applying_script", "beaconhill_scraper.py", "beaconhill_open_jobs.py", "beaconhill", "file", "max-pages", 3),
@@ -72,11 +73,29 @@ VENDORS: list[Vendor] = [
     Vendor("experis", "Experis", "experis_applying_script", "experis_scraper.py", "experis_open_jobs.py", "experis", "append", "max-pages", 3),
     Vendor("brooksource", "Brooksource", "brooksource_applying_script", "brooksource_scraper.py", "brooksource_open_jobs.py", "brooksource"),
     Vendor("kellymitchell", "KellyMitchell", "kellymitchell_applying_script", "kellymitchell_scraper.py", "kellymitchell_open_jobs.py", "kellymitchell", "append", "jobs-per-page", 50),
-    Vendor("mitchellmartin", "Mitchell Martin", "mitchellmartin_applying_script", "mitchellmartin_scraper.py", "mitchellmartin_open_jobs.py", "mitchellmartin", "none", "max-jobs", 40),
+    Vendor("mitchellmartin", "Mitchell Martin", "mitchellmartin_applying_script", "mitchellmartin_scraper.py", "mitchellmartin_open_jobs.py", "mitchellmartin", "none", "max-jobs", 40, color="red"),
     Vendor("cbts", "CBTS", "cbts_applying_script", "cbts_scraper.py", "cbts_open_jobs.py", "cbts", "file"),
-    Vendor("roberthalf", "Robert Half", "roberthalf_applying_script", "roberthalf_scraper.py", "roberthalf_open_jobs.py", "roberthalf"),
+    Vendor("roberthalf", "Robert Half", "roberthalf_applying_script", "roberthalf_scraper.py", "roberthalf_open_jobs.py", "roberthalf", "file", "max-pages", 3),
     Vendor("kforce", "Kforce", "kforce_applying_script", "kforce_scraper.py", "kforce_open_jobs.py", "kforce", "file"),
-    Vendor("insightglobal", "Insight Global", "insightglobal_applying_script", "insightglobal_scraper.py", "insightglobal_open_jobs.py", "insightglobal", "append"),
+    Vendor("insightglobal", "Insight Global", "insightglobal_applying_script", "insightglobal_scraper.py", "insightglobal_open_jobs.py", "insightglobal", "append", color="red"),
+    Vendor("artech", "Artech", "artech_applying_script", "artech_scraper.py", "artech_open_jobs.py", "artech", "append", "max-pages", 3),
+    Vendor("ccsglobaltech", "CCS Global Tech", "ccsglobaltech_applying_script", "ccsglobaltech_scraper.py", "ccsglobaltech_open_jobs.py", "ccsglobaltech", "append"),
+    Vendor("diverselynx", "Diverse Lynx", "diverselynx_applying_script", "diverselynx_scraper.py", "diverselynx_open_jobs.py", "diverselynx", "append"),
+    Vendor("ettaingroup", "Ettain Group", "ettaingroup_applying_script", "ettaingroup_scraper.py", "ettaingroup_open_jobs.py", "ettaingroup", "append"),
+    Vendor("harveynash", "Harvey Nash", "harveynash_applying_script", "harveynash_scraper.py", "harveynash_open_jobs.py", "harveynash", "append"),
+    Vendor("hays", "Hays", "hays_applying_script", "hays_scraper.py", "hays_open_jobs.py", "hays", "append"),
+    Vendor("inspyr", "INSPYR Solutions", "inspyr_applying_script", "inspyr_scraper.py", "inspyr_open_jobs.py", "inspyr", "append"),
+    Vendor("matlensilver", "Matlen Silver", "matlensilver_applying_script", "matlensilver_scraper.py", "matlensilver_open_jobs.py", "matlensilver", "append"),
+    Vendor("motionrecruitment", "Motion Recruitment", "motionrecruitment_applying_script", "motionrecruitment_scraper.py", "motionrecruitment_open_jobs.py", "motionrecruitment", "append"),
+    Vendor("nttdata", "NTT DATA", "nttdata_applying_script", "nttdata_scraper.py", "nttdata_open_jobs.py", "nttdata", "append"),
+    Vendor("oliverjames", "Oliver James", "oliverjames_applying_script", "oliverjames_scraper.py", "oliverjames_open_jobs.py", "oliverjames", "append"),
+    Vendor("optomi", "Optomi", "optomi_applying_script", "optomi_scraper.py", "optomi_open_jobs.py", "optomi", "append"),
+    Vendor("opensystemstechnologies", "Open Systems Technologies", "opensystemstechnologies_applying_script", "opensystemstechnologies_scraper.py", "opensystemstechnologies_open_jobs.py", "opensystemstechnologies", "append"),
+    Vendor("ptrglobal", "PTR Global", "ptrglobal_applying_script", "ptrglobal_scraper.py", "ptrglobal_open_jobs.py", "ptrglobal", "append"),
+    Vendor("pyramidconsulting", "Pyramid Consulting", "pyramidconsulting_applying_script", "pyramidconsulting_scraper.py", "pyramidconsulting_open_jobs.py", "pyramidconsulting", "append"),
+    Vendor("strategicstaffing", "Strategic Staffing Solutions", "strategicstaffing_applying_script", "strategicstaffing_scraper.py", "strategicstaffing_open_jobs.py", "strategicstaffing", "append"),
+    Vendor("vaco", "Vaco", "vaco_applying_script", "vaco_scraper.py", "vaco_open_jobs.py", "vaco", "append"),
+    Vendor("venturigroup", "Venturi Group", "venturigroup_applying_script", "venturigroup_scraper.py", "venturigroup_open_jobs.py", "venturigroup", "append"),
 ]
 
 VENDOR_BY_SLUG = {vendor.slug: vendor for vendor in VENDORS}
@@ -89,7 +108,16 @@ ROTATION_PAIRS = [
     ["brooksource", "kellymitchell"],
     ["mitchellmartin", "cbts"],
     ["roberthalf", "kforce"],
-    ["insightglobal", "teksystems"],
+    ["insightglobal", "artech"],
+    ["ccsglobaltech", "diverselynx"],
+    ["ettaingroup", "harveynash"],
+    ["hays", "inspyr"],
+    ["matlensilver", "motionrecruitment"],
+    ["nttdata", "oliverjames"],
+    ["optomi", "opensystemstechnologies"],
+    ["ptrglobal", "pyramidconsulting"],
+    ["strategicstaffing", "vaco"],
+    ["venturigroup"],
 ]
 
 RUN_LOCK = threading.Lock()
@@ -723,6 +751,32 @@ def open_job(slug: str, key: str) -> dict[str, Any]:
     raise ValueError("Selected job was not found in the latest output.")
 
 
+def open_new_jobs(slug: str, config: dict[str, Any]) -> dict[str, Any]:
+    vendor = VENDOR_BY_SLUG[slug]
+    jobs = load_latest_jobs(vendor)
+    new_keys = latest_new_keys_for_vendor(slug)
+    opened: list[dict[str, Any]] = []
+    delay = max(float(config.get("delay") or 0), 0)
+    for job in jobs:
+        key = job_key(slug, job)
+        if key not in new_keys:
+            continue
+        url = job_url(job)
+        if not url:
+            continue
+        webbrowser.open_new_tab(url)
+        count = increment_click(key)
+        opened.append({
+            "key": key,
+            "title": str(job.get("title") or ""),
+            "job_url": url,
+            "open_count": count,
+        })
+        if delay:
+            time.sleep(delay)
+    return {"status": "started", "vendor": vendor.label, "count": len(opened), "jobs": opened}
+
+
 def set_applied_mark(slug: str, key: str, applied: bool) -> dict[str, Any]:
     vendor = VENDOR_BY_SLUG[slug]
     jobs = load_latest_jobs(vendor)
@@ -898,6 +952,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 result = open_job(slug, key)
+            except Exception as exc:  # noqa: BLE001
+                self.send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            self.send_json({"ok": True, **result})
+            return
+        if self.path == "/api/open-new-jobs":
+            slug = str(payload.get("vendor") or "")
+            if slug not in VENDOR_BY_SLUG:
+                self.send_json({"ok": False, "error": "Unknown vendor."}, status=400)
+                return
+            try:
+                result = open_new_jobs(slug, config)
             except Exception as exc:  # noqa: BLE001
                 self.send_json({"ok": False, "error": str(exc)}, status=500)
                 return
@@ -1332,6 +1398,7 @@ HTML = r"""<!doctype html>
             <th>Portal</th>
             <th>Today</th>
             <th>Latest Jobs</th>
+            <th>New Jobs</th>
             <th>Latest Output</th>
             <th>Controls</th>
           </tr>
@@ -1495,17 +1562,22 @@ HTML = r"""<!doctype html>
       $("vendors").innerHTML = state.vendors.map((v) => `
         <tr class="${v.active_today ? "active" : ""}">
           <td><input class="pick" type="checkbox" value="${v.slug}" ${(state.vendorChecksTouched ? state.checkedVendors.has(v.slug) : v.active_today) ? "checked" : ""}></td>
-          <td><span class="portal-name">${v.label}</span></td>
+          <td><span class="portal-name" ${v.color === "red" ? 'style="color:#c0392b;font-weight:900"' : ""}>${v.label}</span></td>
           <td>${v.active_today ? '<span class="pill active-pill">active</span>' : ""}</td>
           <td class="${v.latest_count ? "" : "zero"}">
             <span class="job-count">${v.latest_count}</span>
-            ${Number(v.new_count || 0) > 0 ? `<span class="pill new-pill">New ${v.new_count}</span>` : ""}
             ${portalRunPill(v)}
+          </td>
+          <td>
+            ${Number(v.new_count || 0) > 0 ? `<span class="pill new-pill">${v.new_count} new</span>` : '<span class="zero">No New</span>'}
           </td>
           <td class="output-cell" title="${v.latest_file || ""}">${v.latest_file ? `${latestName(v.latest_file)} · ${v.latest_modified}` : '<span class="zero">No output yet</span>'}</td>
           <td>
             <div class="button-row">
               <button class="small" data-open="${v.slug}">Open</button>
+              <button class="small ${Number(v.new_count || 0) > 0 ? "warn" : ""}" data-open-new="${v.slug}" title="Open only jobs that were not in the previous successful scrape" ${Number(v.new_count || 0) > 0 ? "" : "disabled"}>
+                ${Number(v.new_count || 0) > 0 ? `Open New ${v.new_count}` : "No New"}
+              </button>
               ${v.slug === "judgegroup" ? '<button class="small secondary" data-judge-fill>Fill & Submit Queue</button>' : ""}
             </div>
           </td>
@@ -1513,6 +1585,12 @@ HTML = r"""<!doctype html>
       `).join("");
       document.querySelectorAll("[data-open]").forEach((button) => {
         button.addEventListener("click", () => openPortal(button.dataset.open));
+      });
+      document.querySelectorAll("[data-open-latest]").forEach((button) => {
+        button.addEventListener("click", () => openPortal(button.dataset.openLatest));
+      });
+      document.querySelectorAll("[data-open-new]").forEach((button) => {
+        button.addEventListener("click", () => openNewJobs(button.dataset.openNew));
       });
       document.querySelectorAll("[data-judge-fill]").forEach((button) => {
         button.addEventListener("click", () => judgeApply());
@@ -1636,6 +1714,21 @@ HTML = r"""<!doctype html>
         state.jobsMeta = {};
       }
       renderJobsPanel();
+    }
+
+    async function openNewJobs(slug) {
+      state.selectedVendor = slug;
+      $("openVendor").value = slug;
+      state.showNewOnly = true;
+      $("newOnly").checked = true;
+      renderJudgePanel();
+      const data = await api("/api/open-new-jobs", { method: "POST", body: JSON.stringify({ vendor: slug }) });
+      await loadSelectedJobs();
+      const vendor = state.vendors.find((item) => item.slug === slug);
+      const count = data.count || 0;
+      $("log").textContent = count
+        ? `Opening ${count} new job${count === 1 ? "" : "s"} for ${vendor?.label || slug}.`
+        : `No new jobs to open for ${vendor?.label || slug}.`;
     }
 
     async function scrape(mode, vendors = []) {

@@ -22,6 +22,7 @@ docker_state/
 job_portal_dashboard_config.json
 job_portal_dashboard_applied.json
 job_portal_dashboard_clicks.json
+job_portal_dashboard_seen.json
 
 # Personal documents and downloaded sheets
 *.docx

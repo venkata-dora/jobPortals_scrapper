@@ -464,10 +464,6 @@ def scrape_akkodis(
         if exclude_disallowed_work and is_disallowed_work_job(job):
             print(f"Excluded {job.job_id}: {', '.join(disallowed_work_reasons(job.raw_text)) or 'disallowed work signal'}")
             continue
-        if is_below_min_hourly_pay(row, detail, min_hourly_rate):
-            _, max_rate, unit = pay_rate_from_row(row, detail)
-            print(f"Excluded {job.job_id}: below ${min_hourly_rate:g}/hour pay threshold (max {max_rate:g} {unit})")
-            continue
         jobs.append(job)
     return jobs
 
@@ -651,8 +647,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-hourly-rate",
         type=float,
-        default=55,
-        help="Remove hourly jobs whose max pay rate is below this amount. Use 0 to disable.",
+        default=0,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--timeout", type=int, default=20, help="HTTP timeout in seconds.")
     parser.add_argument("--sleep", type=float, default=0.5, help="Seconds to sleep between requests.")

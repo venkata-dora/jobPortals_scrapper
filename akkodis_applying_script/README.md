@@ -48,18 +48,6 @@ To keep F2F/onsite-interview/full-time/permanent jobs for review:
 python akkodis_applying_script/akkodis_scraper.py --keep-w2-f2f-onsite-interview
 ```
 
-To change the minimum hourly pay:
-
-```bash
-python akkodis_applying_script/akkodis_scraper.py --min-hourly-rate 65
-```
-
-To disable the pay filter:
-
-```bash
-python akkodis_applying_script/akkodis_scraper.py --min-hourly-rate 0
-```
-
 ## Daily Excel
 
 Run the daily Akkodis update manually:

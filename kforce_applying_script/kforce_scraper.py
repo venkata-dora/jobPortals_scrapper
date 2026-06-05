@@ -28,7 +28,7 @@ AZURE_SEARCH_URL = (
     "/indexes/kforcewebjobentity/docs/search"
     "?api-version=2020-06-30"
 )
-AZURE_SEARCH_KEY = os.environ.get("KFORCE_AZURE_SEARCH_KEY", "")
+AZURE_SEARCH_KEY = os.environ.get("KFORCE_AZURE_SEARCH_KEY", "1603E4DC4C87A8E41D6BBDE4EEA4EFB7")
 KFORCE_JOB_BASE = "https://www.kforce.com/Jobs"
 
 DEFAULT_SEARCH_TERMS = [
@@ -539,12 +539,6 @@ def scrape_kforce(
                 reasons = ", ".join(disallowed_work_reasons(job.raw_text))
                 print(f"Excluded {job.reference_code}: {reasons}")
                 continue
-            if below_min_hourly(job, min_hourly_rate):
-                print(f"Excluded {job.reference_code}: below ${min_hourly_rate:g}/hour pay threshold")
-                continue
-            if job.pay_rate_unit == "year":
-                print(f"  Excluded (annual salary = full-time signal): {job.title}")
-                continue
             jobs.append(job)
         time.sleep(sleep_seconds)
 
@@ -704,7 +698,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--posted-within-days", type=int, default=4)
     parser.add_argument("--all-job-types", action="store_true", help="Include Direct Hire jobs (default: Contract only).")
     parser.add_argument("--keep-w2-f2f-onsite-interview", action="store_true")
-    parser.add_argument("--min-hourly-rate", type=float, default=55)
+    parser.add_argument("--min-hourly-rate", type=float, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--ai-filter", action="store_true", default=False, help="Use Groq/Llama to filter irrelevant jobs (default: off).")
     parser.add_argument("--no-ai-filter", action="store_true", help="Skip AI filter (default).")
     parser.add_argument("--timeout", type=int, default=20)
