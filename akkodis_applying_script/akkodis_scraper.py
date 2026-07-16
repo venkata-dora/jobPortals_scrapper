@@ -13,6 +13,7 @@ import csv
 import html
 import json
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,9 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import quote_plus
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared_vendor_filters import strict_job_filter_reasons
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -312,13 +316,17 @@ def row_posted_date(row: Dict[str, Any]) -> Optional[datetime]:
 
 
 def is_within_posted_days(row: Dict[str, Any], days: Optional[int], now: Optional[datetime] = None) -> bool:
-    if not days or days <= 0:
+    if not days:
         return True
     posted = row_posted_date(row)
     if not posted:
         return False
-    now = now or datetime.now(timezone.utc)
-    return 0 <= (now - posted).total_seconds() <= days * 24 * 60 * 60
+    now = now or datetime.now().astimezone()
+    if days == -1:
+        return posted.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
+        return True
+    return 0 <= (now.astimezone(timezone.utc) - posted).total_seconds() <= days * 24 * 60 * 60
 
 
 def public_job_url(row: Dict[str, Any]) -> str:
@@ -457,6 +465,10 @@ def scrape_akkodis(
                 print(f"Detail failed for {row.get('jobId')}: {exc}")
             time.sleep(sleep_seconds)
         job = normalize_job(row, term, detail)
+        strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+        if strict_reasons:
+            print(f"Excluded {job.job_id}: {', '.join(strict_reasons)} — {job.title}")
+            continue
         title_reasons = java_title_reasons(job.title)
         if title_reasons:
             print(f"Excluded {job.job_id}: {', '.join(title_reasons)} — {job.title}")
@@ -594,7 +606,7 @@ def write_excel(jobs: List[AkkodisJob], path: Path, posted_within_days: Optional
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Minimum Hourly Pay"
     summary["B5"] = "Disabled" if not min_hourly_rate else f"${min_hourly_rate:g}/hour"
     summary["A6"] = "Total Jobs"

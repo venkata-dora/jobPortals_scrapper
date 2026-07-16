@@ -62,12 +62,24 @@ TITLE_EXCLUSION_PATTERNS = [
 ]
 
 ROLE_EXCLUSION_PATTERNS = [
+    (re.compile(r"\b(?:lead|architect)\b", re.I), "Lead/architect role"),
+    (re.compile(r"\b(?:zendesk|network|cyber|iam|hsm|emulation)\b", re.I), "Unrelated specialty"),
+    (re.compile(r"\b(?:mobile|ios|android)\b", re.I), "Mobile role"),
+    (re.compile(r"\bgolang\b|\.net\b|\bdotnet\b", re.I), "Non-target language"),
+    (re.compile(r"\b(?:qa|quality assurance|testing|tester)\b", re.I), "Testing role"),
+    (re.compile(r"\b(?:support|coach|manager)\b", re.I), "Support/management role"),
     (re.compile(r"\bembedded\s+software\b", re.I), "Embedded software"),
     (re.compile(r"\bmissile\s+systems?\b", re.I), "Missile systems"),
     (re.compile(r"\bros\s*/?\s*ros2\b|\bros2?\b", re.I), "ROS/hardware role"),
     (re.compile(r"\belectronics\s+hardware\b", re.I), "Electronics hardware"),
     (re.compile(r"\bwiring\s+a\s+motor\b", re.I), "Hardware wiring"),
 ]
+
+SECURITY_CLEARANCE_RE = re.compile(
+    r"\b(?:security|active|current|secret|top\s+secret|dod)\s+clearance\b"
+    r"|\b(?:ts\s*/\s*sci|ts-sci|public\s+trust)\b",
+    re.I,
+)
 
 DISALLOWED_WORK_PATTERNS = [
     (re.compile(r"\bno\s+c2c\b", re.I), "No C2C"),
@@ -92,6 +104,31 @@ DISALLOWED_WORK_PATTERNS = [
 EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![A-Za-z0-9._%+-])")
 PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}(?!\d)")
 MIN_TITLE_RANK = 20
+TARGET_TITLE_PATTERNS = [
+    re.compile(r"\bpython\b", re.I),
+    re.compile(r"\b(?:ai|a\.i\.|artificial intelligence|machine learning|ml|llm|generative ai|gen ai|agentic ai)\b", re.I),
+    re.compile(r"\bdata\s+(?:engineer|scientist|architect|developer)\b", re.I),
+    re.compile(r"\b(?:full[\s-]*stack|backend|back[\s-]*end)\b", re.I),
+    re.compile(r"\bapi\s+(?:developer|engineer|architect)\b", re.I),
+    re.compile(r"\bsoftware\s+(?:engineer|developer|architect)\b", re.I),
+]
+US_STATE_NAMES = (
+    "alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|"
+    "hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|"
+    "michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|"
+    "new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|"
+    "rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|"
+    "west virginia|wisconsin|wyoming|district of columbia"
+)
+US_STATE_CODES = (
+    "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|"
+    "NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC"
+)
+US_LOCATION_RE = re.compile(
+    rf"\b(?:united states|u\.?s\.?a?\.?|remote\s*(?:[-–—,/]\s*)?(?:us|usa|united states)|{US_STATE_NAMES})\b"
+    rf"|,\s*(?:{US_STATE_CODES})(?:\s|,|$)",
+    re.I,
+)
 
 
 @dataclass
@@ -184,13 +221,20 @@ def posted_day(job: VendorJob) -> str:
     return parsed.date().isoformat() if parsed else "unknown-date"
 
 
-def is_within_posted_days(posted_date: str, days: Optional[int]) -> bool:
-    if not days or days <= 0:
+def is_within_posted_days(posted_date: str, days: Optional[int], now: Optional[datetime] = None) -> bool:
+    if not days:
         return True
     parsed = parse_posted_date(posted_date)
     if not parsed:
+        return days != -1
+    now = now or datetime.now().astimezone()
+    if days == -1:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}", str(posted_date).strip()):
+            return parsed.date() == now.date()
+        return parsed.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
         return True
-    return 0 <= (datetime.now(timezone.utc) - parsed).total_seconds() <= days * 86400
+    return 0 <= (now.astimezone(timezone.utc) - parsed).total_seconds() <= days * 86400
 
 
 def extract_contact_info(text: str) -> str:
@@ -220,10 +264,33 @@ def disallowed_work_reasons(text: str) -> list[str]:
     return reasons
 
 
+def strict_job_filter_reasons(title: str, location: str, raw_text: str = "") -> list[str]:
+    reasons = []
+    title = clean_text(title)
+    location_text = clean_text(location)
+    location_source = location_text or clean_text(raw_text)
+    if not US_LOCATION_RE.search(location_source):
+        reasons.append("No U.S. location")
+    if not any(pattern.search(title) for pattern in TARGET_TITLE_PATTERNS):
+        reasons.append("Title is outside target roles")
+    for pattern, reason in ROLE_EXCLUSION_PATTERNS:
+        if pattern.search(title) and reason not in reasons:
+            reasons.append(reason)
+    if SECURITY_CLEARANCE_RE.search(" ".join([title, clean_text(raw_text)])):
+        reasons.append("Security clearance required")
+    if re.search(r"\b(?:zug|switzerland|india|costa rica)\b", title, re.I):
+        reasons.append("Foreign location in title")
+    return reasons
+
+
 def filter_and_sort_jobs(jobs: Iterable[VendorJob], posted_within_days: Optional[int], exclude_disallowed_work: bool) -> list[VendorJob]:
     kept = []
     for job in jobs:
         if not is_within_posted_days(job.posted_date, posted_within_days):
+            continue
+        strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+        if strict_reasons:
+            print(f"  Excluded ({', '.join(strict_reasons)}): {job.title}")
             continue
         if job.title_rank < MIN_TITLE_RANK:
             print(f"  Skipped low-rank ({job.title_rank}): {job.title}")
@@ -286,7 +353,7 @@ def write_excel(jobs: list[VendorJob], path: Path, posted_within_days: Optional[
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Total Jobs"
     summary["B5"] = len(jobs)
     append_jobs_sheet(workbook, "All Jobs", jobs)

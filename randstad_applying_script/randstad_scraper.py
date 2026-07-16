@@ -8,6 +8,7 @@ import csv
 import html
 import json
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,9 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared_vendor_filters import strict_job_filter_reasons
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -208,14 +212,24 @@ def ms_epoch_to_iso(ms: Any) -> str:
 
 
 def is_within_posted_days(posted_iso: str, days: Optional[int]) -> bool:
-    if not days or days <= 0 or not posted_iso:
+    if not days:
         return True
+    if not posted_iso:
+        return days != -1
     try:
-        posted_dt = datetime.fromisoformat(posted_iso).replace(tzinfo=timezone.utc)
+        posted_dt = datetime.fromisoformat(posted_iso)
+        if posted_dt.tzinfo is None:
+            posted_dt = posted_dt.replace(tzinfo=timezone.utc)
     except ValueError:
+        return days != -1
+    now = datetime.now().astimezone()
+    if days == -1:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(posted_iso).strip()):
+            return posted_dt.date() == now.date()
+        return posted_dt.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
         return True
-    now = datetime.now(timezone.utc)
-    return 0 <= (now - posted_dt).total_seconds() <= days * 86400
+    return 0 <= (now.astimezone(timezone.utc) - posted_dt).total_seconds() <= days * 86400
 
 
 def term_to_slug(term: str) -> str:
@@ -408,6 +422,10 @@ def scrape_randstad(
                 continue
 
             job = normalize_job(row)
+            strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+            if strict_reasons:
+                print(f"  Excluded ({', '.join(strict_reasons)}): {job.title}")
+                continue
 
             if job.title_rank < MIN_TITLE_RANK:
                 print(f"  Skipped low-rank ({job.title_rank}): {job.title}")
@@ -528,7 +546,7 @@ def write_excel(jobs: list[RandstadJob], path: Path, posted_within_days: Optiona
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Min Hourly Pay"
     summary["B5"] = "Disabled" if not min_hourly_rate else f"${min_hourly_rate:g}/hour"
     summary["A6"] = "Total Jobs"

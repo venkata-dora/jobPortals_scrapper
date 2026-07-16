@@ -43,8 +43,29 @@ python apexsystems_applying_script/apex_apply.py --limit 4
 ```
 
 The script uploads your resume, clicks Continue, fills/verifies first name, last
-name, and email, then leaves each tab open at `Submit Application`. You manually
-click submit and handle CAPTCHA if Apex shows it.
+name, and email, then leaves each tab open at `Submit Application`. It uses a
+visible Chrome window and a persistent profile at
+`apexsystems_applying_script/.browser_profile`, so cookies and login sessions
+are retained between runs. If human verification appears, solve it in the open
+window and the script resumes after the challenge clears.
+
+Submit automatically after filling:
+
+```bash
+python apexsystems_applying_script/apex_apply.py --limit 4 --submit
+```
+
+Process one or more application URLs directly:
+
+```bash
+python apexsystems_applying_script/apex_apply.py \
+  --url "https://example.com/application/1" \
+  --url "https://example.com/application/2"
+```
+
+Automatic submit is opt-in so the normal command remains safe for review. The
+automation reuses normal browser state; it does not spoof browser fingerprints
+or bypass verification challenges.
 
 Change posting-date filter:
 

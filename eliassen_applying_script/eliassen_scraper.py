@@ -8,6 +8,7 @@ import csv
 import html
 import json
 import re
+import sys
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
@@ -17,6 +18,9 @@ from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared_vendor_filters import strict_job_filter_reasons
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -250,12 +254,19 @@ def posted_day(job: EliassenJob) -> str:
 
 
 def is_within_posted_days(posted_date: str, days: Optional[int]) -> bool:
-    if not days or days <= 0:
+    if not days:
         return True
     parsed = parse_posted_date(posted_date)
     if not parsed:
+        return days != -1
+    now = datetime.now().astimezone()
+    if days == -1:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}", str(posted_date).strip()):
+            return parsed.date() == now.date()
+        return parsed.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
         return True
-    return 0 <= (datetime.now(timezone.utc) - parsed).total_seconds() <= days * 86400
+    return 0 <= (now.astimezone(timezone.utc) - parsed).total_seconds() <= days * 86400
 
 
 def title_exclusion_reasons(title: str) -> list[str]:
@@ -358,6 +369,10 @@ def scrape_eliassen(posted_within_days: Optional[int], exclude_disallowed_work: 
         job = normalize_entry(entry)
         if not is_within_posted_days(job.posted_date, posted_within_days):
             continue
+        strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+        if strict_reasons:
+            print(f"  Excluded ({', '.join(strict_reasons)}): {job.title}")
+            continue
         if job.title_rank < MIN_TITLE_RANK:
             print(f"  Skipped low-rank ({job.title_rank}): {job.title}")
             continue
@@ -457,7 +472,7 @@ def write_excel(jobs: list[EliassenJob], path: Path, posted_within_days: Optiona
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Total Jobs"
     summary["B5"] = len(jobs)
     summary.append([])

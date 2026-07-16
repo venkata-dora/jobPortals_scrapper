@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,24 +28,54 @@ APPLIED_PATH = Path(os.environ.get("JOB_DASHBOARD_APPLIED_PATH", ROOT / "job_por
 CLICKS_PATH = Path(os.environ.get("JOB_DASHBOARD_CLICKS_PATH", ROOT / "job_portal_dashboard_clicks.json")).expanduser()
 SEEN_PATH = Path(os.environ.get("JOB_DASHBOARD_SEEN_PATH", ROOT / "job_portal_dashboard_seen.json")).expanduser()
 APPLIED_TTL_SECONDS = 2 * 60 * 60
+SCRAPE_CONCURRENCY = 4
 PYTHON = sys.executable or "python3"
+
+TEKSYSTEMS_PORTAL_KEYWORDS = [
+    "python",
+    "software engineer",
+    "full stack",
+    "backend",
+    "data engineer",
+    "etl",
+    "ai engineer",
+    "machine learning",
+    "generative ai",
+    "llm",
+    "rag",
+    "cloud engineer",
+]
 
 
 DEFAULT_KEYWORDS = [
     "python developer",
     "python engineer",
+    "senior python developer",
+    "backend python engineer",
+    "backend software engineer",
     "full stack developer",
     "full stack engineer",
     "backend developer",
     "software engineer python",
+    "software engineer",
+    "software developer",
+    "django developer",
+    "fastapi developer",
+    "api developer",
     "data engineer",
     "data engineering",
     "etl developer",
+    "data pipeline",
     "ai engineer",
     "machine learning engineer",
+    "ml engineer",
     "generative ai",
-    "llm",
-    "rag",
+    "llm engineer",
+    "rag engineer",
+    "data scientist",
+    "cloud engineer",
+    "aws python developer",
+    "azure python developer",
 ]
 
 
@@ -558,7 +589,8 @@ def command_for_scrape(vendor: Vendor, config: dict[str, Any]) -> list[str]:
     ]
     if vendor.terms_mode == "file":
         terms_path = ROOT / vendor.folder / ".dashboard_terms.txt"
-        terms_path.write_text("\n".join(normalize_keywords(config.get("keywords"))) + "\n", encoding="utf-8")
+        keywords = TEKSYSTEMS_PORTAL_KEYWORDS if vendor.slug == "teksystems" else normalize_keywords(config.get("keywords"))
+        terms_path.write_text("\n".join(keywords) + "\n", encoding="utf-8")
         cmd.extend(["--terms-file", str(terms_path)])
     elif vendor.terms_mode == "append":
         for keyword in normalize_keywords(config.get("keywords")):
@@ -614,26 +646,13 @@ def start_run(kind: str, vendor_slugs: list[str], config: dict[str, Any]) -> str
 
 
 def run_scrapers(run_id: str, vendor_slugs: list[str], config: dict[str, Any]) -> None:
-    for slug in vendor_slugs:
-        if STOP_EVENT.is_set():
-            break
+    def run_one(slug: str, step: dict[str, Any]) -> None:
         vendor = VENDOR_BY_SLUG[slug]
-        step_started = datetime.now()
-        step = {
-            "vendor": vendor.label,
-            "slug": slug,
-            "status": "running",
-            "count": 0,
-            "output": "",
-            "started_at": step_started.isoformat(timespec="seconds"),
-            "finished_at": "",
-            "duration_seconds": None,
-            "summary": "",
-        }
-        RUNS[run_id]["steps"].append(step)
+        step_started = datetime.fromisoformat(step["started_at"])
         before = latest_jobs_file(vendor)
         previous_keys = baseline_keys_for_vendor(vendor, before)
         cmd = command_for_scrape(vendor, config)
+        proc: subprocess.Popen[Any] | None = None
         try:
             proc = launch_process(
                 cmd,
@@ -645,7 +664,8 @@ def run_scrapers(run_id: str, vendor_slugs: list[str], config: dict[str, Any]) -
                 stderr=subprocess.PIPE,
             )
             try:
-                stdout, stderr = proc.communicate(timeout=900)
+                timeout_seconds = 300 if slug == "teksystems" else 900
+                stdout, stderr = proc.communicate(timeout=timeout_seconds)
             finally:
                 unregister_process(proc.pid)
             step_finished = datetime.now()
@@ -675,19 +695,18 @@ def run_scrapers(run_id: str, vendor_slugs: list[str], config: dict[str, Any]) -
                 "finished_at": step_finished.isoformat(timespec="seconds"),
                 "duration_seconds": round((step_finished - step_started).total_seconds(), 1),
             })
-            if STOP_EVENT.is_set():
-                break
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except OSError:
-                pass
-            unregister_process(proc.pid)
+            if proc:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except OSError:
+                    pass
+                unregister_process(proc.pid)
             step_finished = datetime.now()
             step.update({
                 "status": "failed",
-                "output": "Timed out after 900 seconds.",
-                "summary": "Timed out after 900 seconds.",
+                "output": f"Timed out after {300 if slug == 'teksystems' else 900} seconds.",
+                "summary": f"Timed out after {300 if slug == 'teksystems' else 900} seconds.",
                 "returncode": -1,
                 "finished_at": step_finished.isoformat(timespec="seconds"),
                 "duration_seconds": round((step_finished - step_started).total_seconds(), 1),
@@ -702,6 +721,36 @@ def run_scrapers(run_id: str, vendor_slugs: list[str], config: dict[str, Any]) -
                 "finished_at": step_finished.isoformat(timespec="seconds"),
                 "duration_seconds": round((step_finished - step_started).total_seconds(), 1),
             })
+
+    steps: list[tuple[str, dict[str, Any]]] = []
+    for slug in vendor_slugs:
+        vendor = VENDOR_BY_SLUG[slug]
+        step = {
+            "vendor": vendor.label,
+            "slug": slug,
+            "status": "queued",
+            "count": 0,
+            "output": "",
+            "started_at": "",
+            "finished_at": "",
+            "duration_seconds": None,
+            "summary": "",
+        }
+        RUNS[run_id]["steps"].append(step)
+        steps.append((slug, step))
+
+    def start_one(slug: str, step: dict[str, Any]) -> None:
+        if STOP_EVENT.is_set():
+            step["status"] = "stopped"
+            return
+        step["status"] = "running"
+        step["started_at"] = datetime.now().isoformat(timespec="seconds")
+        run_one(slug, step)
+
+    with ThreadPoolExecutor(max_workers=min(SCRAPE_CONCURRENCY, len(steps))) as executor:
+        futures = [executor.submit(start_one, slug, step) for slug, step in steps]
+        for future in as_completed(futures):
+            future.result()
     if STOP_EVENT.is_set():
         RUNS[run_id]["status"] = "stopped"
     else:
@@ -1125,6 +1174,7 @@ HTML = r"""<!doctype html>
     td.output-cell { max-width: 310px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .job-count { font-weight: 800; font-size: 14px; }
     .portal-name { font-weight: 800; }
+    .portal-mode { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 700; }
     tr.active td { background: var(--good-bg); }
     tr:last-child td { border-bottom: 0; }
     .toolbar {
@@ -1271,7 +1321,7 @@ HTML = r"""<!doctype html>
       <div class="sub">Daily scrape all portals. Actively open two weekday portals from the rotation.</div>
     </div>
     <div class="buttons">
-      <button class="primary" id="scrapeAll">Scrape All 15</button>
+      <button class="primary" id="scrapeAll">Scrape All</button>
       <button class="secondary" id="scrapeToday">Scrape Today's 2</button>
       <button class="danger" id="stopAll">Stop</button>
       <button id="refresh">Refresh</button>
@@ -1284,8 +1334,16 @@ HTML = r"""<!doctype html>
         <div class="sub">These values are passed into each scraper that supports them.</div>
         <div class="row" style="margin-top:12px">
           <div>
-            <label for="days">Posted within days</label>
-            <input id="days" type="number" min="0" step="1">
+            <label for="days">Posted date</label>
+            <select id="days">
+              <option value="-1">Today</option>
+              <option value="1">Last 24 hours</option>
+              <option value="2">Last 2 days</option>
+              <option value="3">Last 3 days</option>
+              <option value="4">Last 4 days</option>
+              <option value="7">Last 7 days</option>
+              <option value="0">All dates</option>
+            </select>
           </div>
           <div>
             <label for="openLimit">Open limit</label>
@@ -1377,7 +1435,7 @@ HTML = r"""<!doctype html>
           </details>
         </div>
       </div>
-      <div class="notice">Weekends are skipped for the two-portal rotation. Scrape All 15 is the daily safety net.</div>
+      <div class="notice">Weekends are skipped for the two-portal rotation. Scrape All is the daily safety net.</div>
     </aside>
     <section>
       <div class="toolbar">
@@ -1558,11 +1616,15 @@ HTML = r"""<!doctype html>
       $("openVendor").value = validVendor ? previousVendor : (state.vendors[0]?.slug || "");
       state.selectedVendor = $("openVendor").value;
       renderJudgePanel();
+      $("scrapeAll").textContent = `Scrape All ${state.vendors.length}`;
 
       $("vendors").innerHTML = state.vendors.map((v) => `
         <tr class="${v.active_today ? "active" : ""}">
           <td><input class="pick" type="checkbox" value="${v.slug}" ${(state.vendorChecksTouched ? state.checkedVendors.has(v.slug) : v.active_today) ? "checked" : ""}></td>
-          <td><span class="portal-name" ${v.color === "red" ? 'style="color:#c0392b;font-weight:900"' : ""}>${v.label}</span></td>
+          <td>
+            <span class="portal-name" ${v.color === "red" ? 'style="color:#c0392b;font-weight:900"' : ""}>${v.label}</span>
+            ${v.slug === "teksystems" ? '<span class="portal-mode">Live browser · Contractor</span>' : ""}
+          </td>
           <td>${v.active_today ? '<span class="pill active-pill">active</span>' : ""}</td>
           <td class="${v.latest_count ? "" : "zero"}">
             <span class="job-count">${v.latest_count}</span>

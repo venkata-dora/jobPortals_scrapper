@@ -18,6 +18,7 @@ logs/
 reports/
 docker_state/
 **/output/
+**/.browser_profile/
 **/.dashboard_terms.txt
 job_portal_dashboard_config.json
 job_portal_dashboard_applied.json

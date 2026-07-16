@@ -84,7 +84,10 @@ def is_allowed_employment_type(employment_type: str) -> bool:
 
 def scrape_jobs(terms: list[str], timeout: int, max_jobs: int, sleep: float) -> list[VendorJob]:
     session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; local job search scraper)", "Accept": "application/json"})
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    })
     seen: set[str] = set()
     jobs: list[VendorJob] = []
     per_page = max(1, min(max_jobs, 100))

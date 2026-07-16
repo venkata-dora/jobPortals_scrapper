@@ -9,6 +9,7 @@ import csv
 import json
 import os
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,9 @@ from urllib.parse import parse_qs, urlparse
 
 import groq
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared_vendor_filters import strict_job_filter_reasons
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -311,13 +315,19 @@ def job_posted_day(job: KforceJob) -> str:
 
 
 def is_within_posted_days(post_date: str, days: Optional[int], now: Optional[datetime] = None) -> bool:
-    if not days or days <= 0:
+    if not days:
         return True
     parsed = parse_kforce_date(post_date)
     if not parsed:
         return False
-    now = now or datetime.now(timezone.utc)
-    return 0 <= (now - parsed).total_seconds() <= days * 24 * 60 * 60
+    now = now or datetime.now().astimezone()
+    if days == -1:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}", str(post_date).strip()):
+            return parsed.date() == now.date()
+        return parsed.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
+        return True
+    return 0 <= (now.astimezone(timezone.utc) - parsed).total_seconds() <= days * 24 * 60 * 60
 
 
 def is_hourly_unit(unit: str) -> bool:
@@ -528,6 +538,10 @@ def scrape_kforce(
                 continue
             seen_ids.add(job_id)
             job = normalize_job(row, term)
+            strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+            if strict_reasons:
+                print(f"Excluded {job.reference_code}: {', '.join(strict_reasons)} — {job.title}")
+                continue
             title_reasons = title_exclusion_reasons(job.title)
             if title_reasons:
                 print(f"Excluded {job.reference_code}: {', '.join(title_reasons)} — {job.title}")
@@ -650,7 +664,7 @@ def write_excel(jobs: list[KforceJob], path: Path, posted_within_days: Optional[
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Minimum Hourly Pay"
     summary["B5"] = "Disabled" if not min_hourly_rate else f"${min_hourly_rate:g}/hour"
     summary["A6"] = "Total Jobs"

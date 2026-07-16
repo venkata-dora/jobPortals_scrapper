@@ -8,6 +8,7 @@ import csv
 import html
 import json
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,9 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared_vendor_filters import strict_job_filter_reasons
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -302,12 +306,19 @@ def posted_day(job: BeaconHillJob) -> str:
 
 
 def is_within_posted_days(posted_date: str, days: Optional[int]) -> bool:
-    if not days or days <= 0:
+    if not days:
         return True
     parsed = parse_posted_date(posted_date)
     if not parsed:
+        return days != -1
+    now = datetime.now().astimezone()
+    if days == -1:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}", str(posted_date).strip()):
+            return parsed.date() == now.date()
+        return parsed.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
         return True
-    return 0 <= (datetime.now(timezone.utc) - parsed).total_seconds() <= days * 86400
+    return 0 <= (now.astimezone(timezone.utc) - parsed).total_seconds() <= days * 86400
 
 
 def make_session() -> requests.Session:
@@ -430,6 +441,10 @@ def scrape_beaconhill(
 
                 if not is_within_posted_days(job.posted_date, posted_within_days):
                     continue
+                strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+                if strict_reasons:
+                    print(f"  Excluded ({', '.join(strict_reasons)}): {job.title}")
+                    continue
                 if not allowed_employment_type(job.employment_type):
                     print(f"  Excluded employment type ({job.employment_type}): {job.title}")
                     continue
@@ -550,7 +565,7 @@ def write_excel(jobs: list[BeaconHillJob], path: Path, posted_within_days: Optio
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Total Jobs"
     summary["B5"] = len(jobs)
     summary.append([])

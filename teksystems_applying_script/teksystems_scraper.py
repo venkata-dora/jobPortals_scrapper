@@ -8,6 +8,7 @@ import csv
 import html
 import json
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -16,13 +17,18 @@ from typing import Any, Iterable, Optional
 from urllib.parse import quote_plus
 
 import requests
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared_vendor_filters import strict_job_filter_reasons
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
 BASE_URL = "https://careers.teksystems.com"
-SEARCH_URL = f"{BASE_URL}/us/en/search-results?keywords={{query}}&from=0&s=1"
+SEARCH_URL = f"{BASE_URL}/us/en/search-results?keywords={{query}}"
+MAX_JOBS_PER_SEARCH = 150
 
 DEFAULT_SEARCH_TERMS = [
     "python developer",
@@ -276,13 +282,19 @@ def job_posted_day(job: TEKsystemsJob) -> str:
 
 
 def is_within_posted_days(posted_date: str, days: Optional[int]) -> bool:
-    if not days or days <= 0:
+    if not days:
         return True
     parsed = parse_teksystems_date(posted_date)
     if not parsed:
+        return days != -1
+    now = datetime.now().astimezone()
+    if days == -1:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}", str(posted_date).strip()):
+            return parsed.date() == now.date()
+        return parsed.astimezone(now.tzinfo).date() == now.date()
+    if days < 0:
         return True
-    now = datetime.now(timezone.utc)
-    return 0 <= (now - parsed).total_seconds() <= days * 86400
+    return 0 <= (now.astimezone(timezone.utc) - parsed).total_seconds() <= days * 86400
 
 
 def make_session() -> requests.Session:
@@ -389,6 +401,84 @@ def normalize_job(row: dict[str, Any], search_term: str) -> TEKsystemsJob:
     )
 
 
+def launch_browser(playwright: Playwright) -> Browser:
+    """Use an installed desktop browser, falling back to Playwright's Chromium."""
+    for channel in ("chrome", "msedge"):
+        try:
+            return playwright.chromium.launch(headless=True, channel=channel)
+        except Exception:
+            pass
+    return playwright.chromium.launch(headless=True)
+
+
+def browser_search_rows(page: Page, term: str, timeout: int) -> list[dict[str, Any]]:
+    """Collect the live search cards after setting TEKsystems' required distance slider."""
+    page.goto(search_url(term), wait_until="domcontentloaded", timeout=timeout * 1000)
+    page.wait_for_selector(".noUi-target", timeout=timeout * 1000)
+    moved = page.evaluate(
+        """() => {
+            const target = document.querySelector(".noUi-target");
+            if (!target || !target.noUiSlider) return false;
+            target.noUiSlider.set(target.noUiSlider.options.range.max);
+            target.noUiSlider.target.dispatchEvent(new Event("change", {bubbles: true}));
+            return true;
+        }"""
+    )
+    if not moved:
+        raise RuntimeError("TEKsystems distance slider was not available")
+
+    page.wait_for_selector('a[href*="/job/JP-"]', timeout=timeout * 1000)
+
+    # The facet can be collapsed and its state is sticky. Open it when needed.
+    contractor = page.get_by_text("Contractor", exact=True)
+    if not contractor.count() or not contractor.first.is_visible():
+        hiring_type = page.get_by_text("Hiring Type", exact=True)
+        if hiring_type.count():
+            hiring_type.first.click()
+            page.wait_for_timeout(500)
+    if contractor.count() and contractor.first.is_visible():
+        candidate = contractor.first.locator("xpath=ancestor-or-self::*[self::label or self::a or self::li or self::button][1]")
+        if candidate.count():
+            candidate.click()
+            page.wait_for_timeout(1500)
+
+    previous = 0
+    for _ in range(30):
+        links = page.locator('a[href*="/job/JP-"]')
+        current = links.count()
+        if current >= MAX_JOBS_PER_SEARCH or current <= previous:
+            break
+        previous = current
+        more = page.get_by_role("button", name=re.compile(r"(show|load).*more", re.I))
+        if not more.count() or not more.first.is_visible():
+            break
+        more.first.click()
+        page.wait_for_timeout(1200)
+
+    return page.locator('a[href*="/job/JP-"]').evaluate_all(
+        """links => links.slice(0, %d).map(link => {
+            const card = link.closest("li");
+            const get = name => link.getAttribute(name) || "";
+            const location = get("data-ph-at-job-location-text");
+            const parts = location.split(",").map(value => value.trim());
+            const teaser = card ? card.querySelector(".job-description, .description, [class*=description]") : null;
+            return {
+                title: get("data-ph-at-job-title-text") || link.textContent.trim(),
+                location,
+                city: parts[0] || "",
+                state: parts[1] || "",
+                category: get("data-ph-at-job-category-text"),
+                type: get("data-ph-at-job-type-text"),
+                postedDate: get("data-ph-at-job-post-date-text"),
+                jobId: get("data-ph-at-job-id-text"),
+                jobSeqNo: get("data-ph-at-job-seqno-text"),
+                jobUrl: link.href,
+                descriptionTeaser: teaser ? teaser.textContent.trim() : (card ? card.innerText : "")
+            };
+        })""" % MAX_JOBS_PER_SEARCH
+    )
+
+
 def sort_jobs(jobs: Iterable[TEKsystemsJob]) -> list[TEKsystemsJob]:
     return sorted(
         jobs,
@@ -403,57 +493,74 @@ def scrape_teksystems(
     exclude_disallowed_work: bool,
     timeout: int,
     sleep_seconds: float,
+    use_browser: bool = True,
 ) -> list[TEKsystemsJob]:
     session = make_session()
     seen: set[str] = set()
     jobs: list[TEKsystemsJob] = []
+    playwright = sync_playwright().start() if use_browser else None
+    browser = launch_browser(playwright) if playwright else None
+    page = browser.new_page() if browser else None
 
-    for term in search_terms:
-        term = term.strip()
-        if not term:
-            continue
-        url = search_url(term)
-        print(f"Searching TEKsystems: {term} -> {url}")
-        try:
-            response = session.get(url, timeout=timeout)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            print(f"  Request failed: {exc}")
-            time.sleep(sleep_seconds)
-            continue
-
-        payload = extract_eager_search(response.text)
-        data = payload.get("data") or {}
-        rows = [row for row in data.get("jobs") or [] if isinstance(row, dict)]
-        print(f"  Found {data.get('totalHits', len(rows))} total, {len(rows)} on page")
-
-        for row in rows:
-            key = clean_text(row.get("jobSeqNo") or row.get("jobId") or row.get("reqId"))
-            if not key or key in seen:
+    try:
+        for term in search_terms:
+            term = term.strip()
+            if not term:
                 continue
-            seen.add(key)
-
-            job = normalize_job(row, term)
-            if not is_within_posted_days(job.posted_date, posted_within_days):
+            url = search_url(term)
+            print(f"Searching TEKsystems: {term} -> {url}")
+            try:
+                if page:
+                    rows = browser_search_rows(page, term, timeout)
+                else:
+                    response = session.get(url, timeout=timeout)
+                    response.raise_for_status()
+                    payload = extract_eager_search(response.text)
+                    rows = [row for row in (payload.get("data") or {}).get("jobs") or [] if isinstance(row, dict)]
+            except (requests.RequestException, Exception) as exc:
+                print(f"  Search failed: {exc}")
+                time.sleep(sleep_seconds)
                 continue
+            print(f"  Found {len(rows)} live job cards")
 
-            if job.title_rank < MIN_TITLE_RANK:
-                print(f"  Skipped low-rank ({job.title_rank}): {job.title}")
-                continue
+            for row in rows:
+                key = clean_text(row.get("jobSeqNo") or row.get("jobId") or row.get("reqId"))
+                if not key or key in seen:
+                    continue
+                seen.add(key)
 
-            title_reasons = title_exclusion_reasons(job.title)
-            if title_reasons:
-                print(f"  Excluded ({', '.join(title_reasons)}): {job.title}")
-                continue
-
-            if exclude_disallowed_work:
-                reasons = disallowed_work_reasons(" ".join([job.title, job.employment_type, job.raw_text]))
-                if reasons:
-                    print(f"  Excluded ({', '.join(reasons)}): {job.title}")
+                job = normalize_job(row, term)
+                if row.get("jobUrl"):
+                    job.job_url = clean_text(row["jobUrl"])
+                if not is_within_posted_days(job.posted_date, posted_within_days):
+                    continue
+                strict_reasons = strict_job_filter_reasons(job.title, job.location, job.raw_text)
+                if strict_reasons:
+                    print(f"  Excluded ({', '.join(strict_reasons)}): {job.title}")
                     continue
 
-            jobs.append(job)
-        time.sleep(sleep_seconds)
+                if job.title_rank < MIN_TITLE_RANK:
+                    print(f"  Skipped low-rank ({job.title_rank}): {job.title}")
+                    continue
+
+                title_reasons = title_exclusion_reasons(job.title)
+                if title_reasons:
+                    print(f"  Excluded ({', '.join(title_reasons)}): {job.title}")
+                    continue
+
+                if exclude_disallowed_work:
+                    reasons = disallowed_work_reasons(" ".join([job.title, job.employment_type, job.raw_text]))
+                    if reasons:
+                        print(f"  Excluded ({', '.join(reasons)}): {job.title}")
+                        continue
+
+                jobs.append(job)
+            time.sleep(sleep_seconds)
+    finally:
+        if browser:
+            browser.close()
+        if playwright:
+            playwright.stop()
 
     return sort_jobs(jobs)
 
@@ -550,7 +657,7 @@ def write_excel(jobs: list[TEKsystemsJob], path: Path, posted_within_days: Optio
     summary["A3"] = "Generated"
     summary["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary["A4"] = "Posting Window"
-    summary["B4"] = "All dates" if not posted_within_days else f"Last {posted_within_days} days"
+    summary["B4"] = "Today" if posted_within_days == -1 else ("All dates" if not posted_within_days else f"Last {posted_within_days} days")
     summary["A5"] = "Total Jobs"
     summary["B5"] = len(jobs)
     summary.append([])
@@ -599,6 +706,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sleep", type=float, default=0.5)
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent / "output")
     parser.add_argument("--no-excel", action="store_true")
+    parser.add_argument("--http-only", action="store_true", help="Skip the live browser search (less reliable).")
     return parser.parse_args()
 
 
@@ -610,6 +718,7 @@ def main() -> int:
         not args.keep_w2_f2f_onsite_interview,
         args.timeout,
         args.sleep,
+        not args.http_only,
     )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = args.out_dir / f"teksystems_jobs_{timestamp}.csv"
